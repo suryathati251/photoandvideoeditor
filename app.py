@@ -2,12 +2,7 @@ import streamlit as st
 import cv2
 import numpy as np
 from PIL import Image
-try:
-    from rembg import remove, new_session
-except ImportError as e:
-    import streamlit as st
-    st.error(f"rembg import failed: {e}")
-    st.stop()
+from rembg import remove, new_session
 from io import BytesIO
 import tempfile
 import os
@@ -57,9 +52,31 @@ def pil_to_bytes(img: Image.Image, fmt="PNG") -> bytes:
     img.save(buf, format=fmt)
     return buf.getvalue()
 
+def add_checkerboard(rgba_img: Image.Image) -> Image.Image:
+    """Show checkerboard pattern behind transparent areas for preview."""
+    w, h = rgba_img.size
+    checker = Image.new("RGB", (w, h))
+    tile = 20
+    for y in range(0, h, tile):
+        for x in range(0, w, tile):
+            color = (200, 200, 200) if (x // tile + y // tile) % 2 == 0 else (255, 255, 255)
+            for py in range(min(tile, h - y)):
+                for px in range(min(tile, w - x)):
+                    checker.putpixel((x + px, y + py), color)
+    checker = checker.convert("RGBA")
+    checker.paste(rgba_img, mask=rgba_img.split()[3])
+    return checker
+
 # --- Sidebar ---
 st.sidebar.header("🖼️ Background")
-bg_source = st.sidebar.radio("Background Source", ["Free Backgrounds", "Upload My Own", "Transparent (No Background)"])
+bg_source = st.sidebar.radio("Background Source", [
+    "Free Backgrounds",
+    "Upload My Own",
+    "⬜ White",
+    "⬛ Black",
+    "🔲 Transparent (PNG)"
+])
+
 bg_img = None
 
 if bg_source == "Free Backgrounds":
@@ -82,72 +99,93 @@ elif bg_source == "Upload My Own":
         bg_img = cv2.imdecode(bg_np, cv2.IMREAD_COLOR)
         st.sidebar.image(bg_file, caption="Your Background", use_column_width=True)
 
+elif bg_source == "⬜ White":
+    bg_img = np.full((720, 1280, 3), (255, 255, 255), dtype=np.uint8)
+
+elif bg_source == "⬛ Black":
+    bg_img = np.full((720, 1280, 3), (0, 0, 0), dtype=np.uint8)
+
+# bg_img stays None for Transparent
+
 mode = st.radio("Choose Mode", ["📷 Image", "🎥 Video"], horizontal=True)
 session = get_session()
 
 # ---- IMAGE MODE ----
 if mode == "📷 Image":
     src_file = st.file_uploader("Upload Image (any background)", type=["jpg", "jpeg", "png"])
+
     if src_file:
         pil_img = Image.open(src_file).convert("RGB")
+
         with st.spinner("🤖 AI is removing background..."):
-            fg_rgba = remove_bg_pil(pil_img, session)
-        if bg_img is not None:
-            result_pil = composite_on_bg(fg_rgba, bg_img)
-            download_bytes = pil_to_bytes(result_pil, "PNG")
-            result_display = result_pil
-        else:
-            result_display = fg_rgba
-            download_bytes = pil_to_bytes(fg_rgba, "PNG")
+            fg_rgba = remove_bg_pil(pil_img, session)  # Always RGBA
+
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("**Original**")
             st.image(pil_img, use_column_width=True)
+
         with col2:
-            st.markdown("**Background Removed**")
-            st.image(result_display, use_column_width=True)
-        st.download_button("⬇️ Download Result", download_bytes, file_name="result.png", mime="image/png")
+            st.markdown("**Result**")
+            if bg_source == "🔲 Transparent (PNG)":
+                # Show checkerboard for transparent preview
+                preview = add_checkerboard(fg_rgba)
+                st.image(preview, use_column_width=True)
+                st.caption("✅ Checkerboard = transparent area (actual PNG will be transparent)")
+                download_bytes = pil_to_bytes(fg_rgba, "PNG")
+                st.download_button("⬇️ Download Transparent PNG", download_bytes,
+                                   file_name="result_transparent.png", mime="image/png")
+            elif bg_img is not None:
+                result_pil = composite_on_bg(fg_rgba, bg_img)
+                st.image(result_pil, use_column_width=True)
+                download_bytes = pil_to_bytes(result_pil, "PNG")
+                st.download_button("⬇️ Download Result", download_bytes,
+                                   file_name="result.png", mime="image/png")
+            else:
+                st.warning("⚠️ Please select a background from the sidebar.")
 
 # ---- VIDEO MODE ----
 elif mode == "🎥 Video":
     st.info("⚠️ AI video processing is slow. Keep videos under 30 seconds for best performance.")
-    vid_file = st.file_uploader("Upload Video (any background)", type=["mp4", "mov", "avi"])
-    if vid_file:
-        if bg_source == "Transparent (No Background)":
-            st.warning("Transparent background not supported for video. Please pick a background.")
-        elif bg_img is None and bg_source == "Upload My Own":
-            st.warning("⚠️ Please upload a background image from the sidebar.")
-        else:
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_in:
-                tmp_in.write(vid_file.read())
-                tmp_in_path = tmp_in.name
-            out_path = tmp_in_path.replace(".mp4", "_output.mp4")
-            cap = cv2.VideoCapture(tmp_in_path)
-            fps = cap.get(cv2.CAP_PROP_FPS) or 25
-            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            out = cv2.VideoWriter(out_path, fourcc, fps, (w, h))
-            bg_resized = cv2.resize(bg_img, (w, h))
-            progress = st.progress(0, text="Processing video with AI...")
-            frame_count = 0
-            while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                fg_rgba = remove_bg_pil(pil_frame, session)
-                result_pil = composite_on_bg(fg_rgba, bg_resized)
-                result_bgr = cv2.cvtColor(np.array(result_pil), cv2.COLOR_RGB2BGR)
-                out.write(result_bgr)
-                frame_count += 1
-                progress.progress(min(frame_count / total_frames, 1.0),
-                                   text=f"Processing frame {frame_count}/{total_frames}")
-            cap.release()
-            out.release()
-            st.success("✅ Video processed!")
-            with open(out_path, "rb") as f:
-                st.download_button("⬇️ Download Result Video", f, file_name="result.mp4", mime="video/mp4")
-            os.unlink(tmp_in_path)
-            os.unlink(out_path)
+    if bg_source == "🔲 Transparent (PNG)":
+        st.warning("🔲 Transparent background is not supported for video (MP4 does not support transparency). Please choose a background.")
+    else:
+        vid_file = st.file_uploader("Upload Video (any background)", type=["mp4", "mov", "avi"])
+        if vid_file:
+            if bg_img is None and bg_source == "Upload My Own":
+                st.warning("⚠️ Please upload a background image from the sidebar.")
+            else:
+                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_in:
+                    tmp_in.write(vid_file.read())
+                    tmp_in_path = tmp_in.name
+                out_path = tmp_in_path.replace(".mp4", "_output.mp4")
+                cap = cv2.VideoCapture(tmp_in_path)
+                fps = cap.get(cv2.CAP_PROP_FPS) or 25
+                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                out = cv2.VideoWriter(out_path, fourcc, fps, (w, h))
+                bg_resized = cv2.resize(bg_img, (w, h))
+                progress = st.progress(0, text="Processing video with AI...")
+                frame_count = 0
+                while cap.isOpened():
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                    fg_rgba = remove_bg_pil(pil_frame, session)
+                    result_pil = composite_on_bg(fg_rgba, bg_resized)
+                    result_bgr = cv2.cvtColor(np.array(result_pil), cv2.COLOR_RGB2BGR)
+                    out.write(result_bgr)
+                    frame_count += 1
+                    progress.progress(min(frame_count / total_frames, 1.0),
+                                       text=f"Processing frame {frame_count}/{total_frames}")
+                cap.release()
+                out.release()
+                st.success("✅ Video processed!")
+                with open(out_path, "rb") as f:
+                    st.download_button("⬇️ Download Result Video", f,
+                                       file_name="result.mp4", mime="video/mp4")
+                os.unlink(tmp_in_path)
+                os.unlink(out_path)
