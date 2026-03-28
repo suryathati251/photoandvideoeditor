@@ -2,7 +2,12 @@ import streamlit as st
 import cv2
 import numpy as np
 from PIL import Image
-from rembg import remove, new_session
+try:
+    from rembg import remove, new_session
+except ImportError as e:
+    import streamlit as st
+    st.error(f"rembg import failed: {e}")
+    st.stop()
 from io import BytesIO
 import tempfile
 import os
