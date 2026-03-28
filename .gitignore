@@ -1,6 +1,5 @@
 __pycache__/
 *.pyc
-*.pyo
 .env
 *.egg-info/
 dist/
@@ -8,4 +7,4 @@ build/
 .DS_Store
 *.tmp
 *.log
-tempfile_*
+u2net*.onnx
