@@ -1,18 +1,14 @@
-# 🤖 AI Background Remover App
-
-Removes any background from photos and videos using AI (rembg U2-Net).
+# BG Remover Pro
+AI-powered background removal with smart image preprocessing.
 
 ## Features
-- ✅ Removes any background using AI (not just green screen)
-- ✅ 10 free built-in backgrounds + white/black solid colors
-- ✅ Upload your own custom background
-- ✅ Transparent background export (images only)
-- ✅ Works with images (JPG, PNG) and videos (MP4, MOV, AVI)
-
-## Run Locally
-pip install -r requirements.txt
-streamlit run app.py
+- 4 AI models (isnet, u2net, u2netp, u2net_human_seg)
+- Blur detection + auto preprocessing pipeline
+- Alpha matting for hair/fur edges
+- 12 background options + custom color
+- Video support with per-frame processing
 
 ## Deploy
-Push to GitHub → share.streamlit.io → select app.py → Deploy
-Note: First run downloads the U2-Net model (~170MB), cached automatically.
+1. Push to GitHub
+2. Go to https://share.streamlit.io → New App
+3. Select repo → `app.py` → Deploy
