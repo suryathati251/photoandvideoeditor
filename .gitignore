@@ -1,10 +1,10 @@
 __pycache__/
 *.pyc
+*.pyo
 .env
+.venv/
+venv/
 *.egg-info/
-dist/
-build/
 .DS_Store
-*.tmp
-*.log
-u2net*.onnx
+tmp_*.mp4
+*_out.mp4
